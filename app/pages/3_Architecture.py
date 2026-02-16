@@ -180,7 +180,7 @@ st.divider()
 # ----------------------------
 # Latency model / Engineer POV
 # ----------------------------
-st.subheader("Latency Model (Engineer POV)")
+st.subheader("Latency Model & Engineer POV")
 st.markdown(
     """
 In a modular pipeline, end-to-end latency approximately adds up:
@@ -269,7 +269,7 @@ st.divider()
 # ----------------------------
 # What recruiters should take away
 # ----------------------------
-st.subheader("What This Architecture Demonstrates (Hiring Manager Lens)")
+st.subheader("What This Architecture Demonstrates!")
 st.markdown(
     """
 - Clean separation of concerns (UI vs orchestration vs providers)
@@ -280,4 +280,4 @@ st.markdown(
 """
 )
 
-st.success("Next recommended step: add an **Observability** section (logging + traces) and a simple **cost estimator** in Benchmark.")
+#st.success("Next recommended step: add an **Observability** section (logging + traces) and a simple **cost estimator** in Benchmark.")
