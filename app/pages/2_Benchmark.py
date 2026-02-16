@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 from voice_agents.core.factory import get_llm_provider, get_tts_provider
 from voice_agents.orchestrators.pipeline_agent import PipelineAgent
+from ui.common import render_ollama_status_sidebar
 
 # Load .env once per Streamlit server start
 load_dotenv()
@@ -38,8 +39,19 @@ if "bench_results" not in st.session_state:
 with st.sidebar:
     st.header("Benchmark Settings")
 
-    llm_choice = st.selectbox("LLM Provider", ["OpenAI"], index=0)
+    llm_choice = st.selectbox("LLM Provider", ["Ollama", "OpenAI"], index=0, key="llm_choice")
     tts_choice = st.selectbox("TTS Provider", ["ElevenLabs"], index=0)
+
+    # Only show Ollama status when Ollama is selected
+    if llm_choice == "Ollama":
+        llm_choice, _ = render_ollama_status_sidebar(current_llm_choice=llm_choice)
+    else:
+        st.caption("Using cloud LLM provider.")
+
+    # If autoswitch changed it, update widget state and rerun once
+    if st.session_state["llm_choice"] != llm_choice:
+        st.session_state["llm_choice"] = llm_choice
+        st.rerun()
 
     st.divider()
     context = st.text_area(

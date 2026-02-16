@@ -3,6 +3,7 @@ from __future__ import annotations
 from voice_agents.core.interfaces import LLMProvider, TTSProvider
 from voice_agents.providers.llm_openai import OpenAILLM, OpenAILLMConfig
 from voice_agents.providers.tts_elevenlabs import ElevenLabsTTS, ElevenLabsTTSConfig
+from voice_agents.providers.llm_ollama import OllamaLLM, OllamaLLMConfig
 
 
 def get_llm_provider(name: str) -> LLMProvider:
@@ -11,6 +12,10 @@ def get_llm_provider(name: str) -> LLMProvider:
     if key in {"openai", "gpt"}:
         cfg = OpenAILLMConfig.from_env()
         return OpenAILLM(cfg)
+
+    if key in {"ollama"}:
+        cfg = OllamaLLMConfig.from_env()
+        return OllamaLLM(cfg)
 
     raise ValueError(f"Unknown LLM provider: {name}")
 

@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from voice_agents.core.factory import get_llm_provider, get_tts_provider
 from voice_agents.orchestrators.pipeline_agent import PipelineAgent
+from ui.common import render_ollama_status_sidebar
 
 # Load .env once per Streamlit server start
 load_dotenv()
@@ -21,6 +22,10 @@ if "run_history" not in st.session_state:
     st.session_state["run_history"] = []  # most recent first, list[dict]
 if "selected_run_idx" not in st.session_state:
     st.session_state["selected_run_idx"] = 0
+if "history_radio" not in st.session_state:
+    st.session_state["history_radio"] = 0
+if "force_select_newest" not in st.session_state:
+    st.session_state["force_select_newest"] = False
 
 # ---- Provider caching (important) ----
 @st.cache_resource
@@ -33,9 +38,20 @@ def build_agent(llm_name: str, tts_name: str) -> PipelineAgent:
 with st.sidebar:
     st.header("Providers")
 
-    llm_choice = st.selectbox("LLM Provider", ["OpenAI"], index=0)
+    llm_choice = st.selectbox("LLM Provider", ["Ollama", "OpenAI"], index=0, key="llm_choice")
     tts_choice = st.selectbox("TTS Provider", ["ElevenLabs"], index=0)
 
+    # Only show Ollama status when Ollama is selected
+    if llm_choice == "Ollama":
+        llm_choice, _ = render_ollama_status_sidebar(current_llm_choice=llm_choice)
+    else:
+        st.caption("Using cloud LLM provider.")
+
+    # If autoswitch changed it, update widget state and rerun once
+    if st.session_state["llm_choice"] != llm_choice:
+        st.session_state["llm_choice"] = llm_choice
+        st.rerun()
+    
     st.divider()
     context = st.text_area(
         "System Context (optional)",
@@ -44,8 +60,13 @@ with st.sidebar:
         key="system_context",
     )
 
+    if st.session_state.get("force_select_newest", False):
+        st.session_state["selected_run_idx"] = 0
+        st.session_state.pop("history_radio", None)  # reset widget state safely
+        st.session_state["force_select_newest"] = False
+    
     st.divider()
-    st.subheader("Run History")
+    st.subheader("Recent Runs")
 
     history = st.session_state.get("run_history", [])
     if not history:
@@ -55,21 +76,32 @@ with st.sidebar:
         for r in history:
             t = time.strftime("%H:%M:%S", time.localtime(r["ts"]))
             total = r["metrics"].get("total_ms", 0)
-            labels.append(f"{t} • {r['run_id']} • {r['llm_choice']} + {r['tts_choice']} • {total:.0f} ms")
+            labels.append(
+                f"{t} • {r['run_id']} • {r['llm_choice']} + {r['tts_choice']} • {total:.0f} ms"
+            )
 
-        st.session_state["selected_run_idx"] = st.radio(
+        # Pre-select the most recent run (or keep current selection if possible)
+        default_idx = st.session_state.get("history_radio", st.session_state.get("selected_run_idx", 0))
+        default_idx = max(0, min(default_idx, len(labels) - 1))
+
+        chosen = st.radio(
             "Select a previous run",
             options=list(range(len(labels))),
+            index=default_idx,
             format_func=lambda i: labels[i],
-            index=st.session_state.get("selected_run_idx", 0),
             label_visibility="collapsed",
             key="history_radio",
         )
+        st.session_state["selected_run_idx"] = chosen
 
-    cols = st.columns(2)
+    cols = st.columns(1)
+
     if cols[0].button("Clear history", use_container_width=True):
         st.session_state["run_history"] = []
         st.session_state["selected_run_idx"] = 0
+        # Remove widget state so it re-initializes cleanly next run
+        st.session_state.pop("history_radio", None)
+        st.session_state["force_select_newest"] = False
         st.rerun()
 
 # ---- Main UI ----
@@ -124,10 +156,17 @@ if run:
 
         # Select newest result so the page shows the NEW response right away
         st.session_state["selected_run_idx"] = 0
+        st.session_state["force_select_newest"] = True
+        st.rerun()
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        msg = str(e)
+        if "localhost:11434" in msg or "Ollama" in msg:
+            st.error("Ollama is not reachable. Start it with `ollama serve` or switch LLM Provider to OpenAI.")
+        else:
+            st.error(f"Error: {e}")
         st.stop()
+
 
 # --- 2) Determine which run to display (selected history) ---
 history = st.session_state.get("run_history", [])
