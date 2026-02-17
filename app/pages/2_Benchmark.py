@@ -35,23 +35,85 @@ def build_agent(llm_name: str, tts_name: str) -> PipelineAgent:
 if "bench_results" not in st.session_state:
     st.session_state["bench_results"] = None  # dict containing run metadata + results list
 
+# ---- Handle button clicks BEFORE sidebar renders ----
+# Initialize default LLM choice if not set
+if "llm_provider_bench" not in st.session_state:
+    st.session_state["llm_provider_bench"] = "Ollama"
+    st.session_state["user_manually_selected_ollama_bench"] = False
+
+# Check if we need to force switch to OpenAI (from button click on previous render)
+if st.session_state.get("force_switch_to_openai_bench", False):
+    st.session_state["llm_provider_bench"] = "OpenAI"
+    st.session_state["user_manually_selected_ollama_bench"] = False
+    st.session_state["auto_switched_from_ollama_bench"] = True
+    st.session_state["force_switch_to_openai_bench"] = False
+    st.rerun()
+
 # ---- Sidebar controls ----
 with st.sidebar:
     st.header("Benchmark Settings")
 
-    llm_choice = st.selectbox("LLM Provider", ["Ollama", "OpenAI"], index=0, key="llm_choice")
+    # Pre-check: Only auto-switch if user hasn't manually selected Ollama
+    if (st.session_state["llm_provider_bench"] == "Ollama"
+        and not st.session_state.get("user_manually_selected_ollama_bench", False)):
+        from voice_agents.core.ollama_status import check_ollama
+        from voice_agents.providers.llm_ollama import OllamaLLMConfig
+
+        # Initialize auto-switch preference
+        if "auto_switch_openai" not in st.session_state:
+            st.session_state["auto_switch_openai"] = True
+
+        # Check Ollama status before rendering selectbox
+        cfg = OllamaLLMConfig.from_env()
+        status = check_ollama(cfg.base_url, cfg.model, timeout_s=2.0)
+
+        # Auto-switch if Ollama is down and auto-switch is enabled
+        if not status.ok and st.session_state.get("auto_switch_openai", False):
+            st.session_state["llm_provider_bench"] = "OpenAI"
+            st.session_state["auto_switched_from_ollama_bench"] = True
+            st.rerun()  # Force UI update to reflect the switch
+
+    llm_choice = st.selectbox(
+        "LLM Provider",
+        ["Ollama", "OpenAI"],
+        index=0 if st.session_state["llm_provider_bench"] == "Ollama" else 1,
+    )
     tts_choice = st.selectbox("TTS Provider", ["ElevenLabs"], index=0)
 
-    # Only show Ollama status when Ollama is selected
-    if llm_choice == "Ollama":
-        llm_choice, _ = render_ollama_status_sidebar(current_llm_choice=llm_choice)
-    else:
-        st.caption("Using cloud LLM provider.")
+    # Detect if user manually changed the dropdown
+    if st.session_state["llm_provider_bench"] != llm_choice:
+        # User changed the provider manually
+        if llm_choice == "Ollama":
+            # User explicitly selected Ollama - respect their choice
+            st.session_state["user_manually_selected_ollama_bench"] = True
+        else:
+            # User switched away from Ollama - clear the manual flag
+            st.session_state["user_manually_selected_ollama_bench"] = False
 
-    # If autoswitch changed it, update widget state and rerun once
-    if st.session_state["llm_choice"] != llm_choice:
-        st.session_state["llm_choice"] = llm_choice
+        st.session_state["llm_provider_bench"] = llm_choice
         st.rerun()
+
+    # Show Ollama status UI when Ollama is selected
+    if llm_choice == "Ollama":
+        # Get Ollama status for display
+        rendered_choice, ollama_status = render_ollama_status_sidebar(current_llm_choice=llm_choice)
+
+        # If user manually selected Ollama while it's down, show warning with option to re-enable auto-switch
+        if st.session_state.get("user_manually_selected_ollama_bench", False):
+            st.warning("⚠️ You manually selected Ollama. Auto-switch is disabled.")
+
+            # Only show re-enable button if Ollama is actually down
+            if not ollama_status.ok:
+                if st.button("Re-enable auto-switch and use OpenAI", use_container_width=True, key="reset_manual_ollama_bench"):
+                    # Set flag to trigger switch on next render
+                    st.session_state["force_switch_to_openai_bench"] = True
+                    st.rerun()
+    else:
+        # Show info if auto-switched from Ollama
+        if "auto_switched_from_ollama_bench" in st.session_state and st.session_state["auto_switched_from_ollama_bench"]:
+            st.info("ℹ️ Auto-switched to OpenAI because Ollama is down.")
+            st.session_state["auto_switched_from_ollama_bench"] = False  # Clear flag after showing once
+        st.caption("Using cloud LLM provider.")
 
     st.divider()
     context = st.text_area(
@@ -122,7 +184,20 @@ if run_bench:
         st.warning("Please add at least 1 prompt.")
         st.stop()
 
-    agent = build_agent(llm_choice, tts_choice)
+    try:
+        agent = build_agent(llm_choice, tts_choice)
+    except Exception as e:
+        msg = str(e)
+        st.error("**Failed to initialize providers**")
+        if "OPENAI_API_KEY" in msg:
+            st.markdown("Missing OpenAI API key. Check your `.env` file.")
+        elif "ELEVENLABS" in msg:
+            st.markdown("Missing ElevenLabs API key. Check your `.env` file.")
+        elif "Ollama" in msg or "localhost:11434" in msg:
+            st.markdown("Cannot reach Ollama. Start it with `ollama serve` or switch to OpenAI.")
+        else:
+            st.markdown(f"```\n{msg}\n```")
+        st.stop()
 
     results: list[dict[str, Any]] = []
     progress = st.progress(0)
@@ -144,21 +219,36 @@ if run_bench:
                 row["audio_bytes_b64"] = out.audio_bytes.hex()  # hex is simplest; base64 is also fine
             results.append(row)
         except Exception as e:
+            error_msg = str(e)
+            error_type = type(e).__name__
             results.append(
                 {
                     "run_id": f"bench-{int(time.time() * 1000)}-{i}",
                     "prompt": prompt,
-                    "error": str(e),
+                    "error": error_msg,
+                    "error_type": error_type,
                     "metrics": {},
                 }
             )
+            # Show inline warning but continue with other prompts
+            st.warning(f"⚠️ Prompt {i}/{len(prompts)} failed: {error_type}")
         progress.progress(i / len(prompts))
 
     elapsed_s = time.time() - start_ts
-    status.write("Done.")
     progress.empty()
 
     ok_rows = [r for r in results if "error" not in r]
+    error_count = len(results) - len(ok_rows)
+
+    # Show completion summary
+    if error_count == 0:
+        status.success(f"✅ Benchmark complete! All {len(prompts)} prompts succeeded in {elapsed_s:.1f}s")
+    elif error_count < len(prompts):
+        status.warning(f"⚠️ Benchmark complete with {error_count}/{len(prompts)} errors in {elapsed_s:.1f}s")
+    else:
+        status.error(f"❌ All prompts failed. Check provider configuration and error details below.")
+        st.stop()
+
     summary = summarize_latencies(ok_rows)
 
     bench_record = {

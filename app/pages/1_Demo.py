@@ -34,24 +34,86 @@ def build_agent(llm_name: str, tts_name: str) -> PipelineAgent:
     tts = get_tts_provider(tts_name)
     return PipelineAgent(llm=llm, tts=tts)
 
+# ---- Handle button clicks BEFORE sidebar renders ----
+# Initialize default LLM choice if not set
+if "llm_provider" not in st.session_state:
+    st.session_state["llm_provider"] = "Ollama"
+    st.session_state["user_manually_selected_ollama"] = False
+
+# Check if we need to force switch to OpenAI (from button click on previous render)
+if st.session_state.get("force_switch_to_openai", False):
+    st.session_state["llm_provider"] = "OpenAI"
+    st.session_state["user_manually_selected_ollama"] = False
+    st.session_state["auto_switched_from_ollama"] = True
+    st.session_state["force_switch_to_openai"] = False
+    st.rerun()
+
 # ---- Sidebar controls ----
 with st.sidebar:
     st.header("Providers")
 
-    llm_choice = st.selectbox("LLM Provider", ["Ollama", "OpenAI"], index=0, key="llm_choice")
+    # Pre-check: Only auto-switch if user hasn't manually selected Ollama
+    if (st.session_state["llm_provider"] == "Ollama"
+        and not st.session_state.get("user_manually_selected_ollama", False)):
+        from voice_agents.core.ollama_status import check_ollama
+        from voice_agents.providers.llm_ollama import OllamaLLMConfig
+
+        # Initialize auto-switch preference
+        if "auto_switch_openai" not in st.session_state:
+            st.session_state["auto_switch_openai"] = True
+
+        # Check Ollama status before rendering selectbox
+        cfg = OllamaLLMConfig.from_env()
+        status = check_ollama(cfg.base_url, cfg.model, timeout_s=2.0)
+
+        # Auto-switch if Ollama is down and auto-switch is enabled
+        if not status.ok and st.session_state.get("auto_switch_openai", False):
+            st.session_state["llm_provider"] = "OpenAI"
+            st.session_state["auto_switched_from_ollama"] = True
+            st.rerun()  # Force UI update to reflect the switch
+
+    llm_choice = st.selectbox(
+        "LLM Provider",
+        ["Ollama", "OpenAI"],
+        index=0 if st.session_state["llm_provider"] == "Ollama" else 1,
+    )
     tts_choice = st.selectbox("TTS Provider", ["ElevenLabs"], index=0)
 
-    # Only show Ollama status when Ollama is selected
+    # Detect if user manually changed the dropdown
+    if st.session_state["llm_provider"] != llm_choice:
+        # User changed the provider manually
+        if llm_choice == "Ollama":
+            # User explicitly selected Ollama - respect their choice
+            st.session_state["user_manually_selected_ollama"] = True
+        else:
+            # User switched away from Ollama - clear the manual flag
+            st.session_state["user_manually_selected_ollama"] = False
+
+        st.session_state["llm_provider"] = llm_choice
+        st.rerun()
+
+    # Show Ollama status UI when Ollama is selected
     if llm_choice == "Ollama":
-        llm_choice, _ = render_ollama_status_sidebar(current_llm_choice=llm_choice)
+        # Get Ollama status for display
+        rendered_choice, ollama_status = render_ollama_status_sidebar(current_llm_choice=llm_choice)
+
+        # If user manually selected Ollama while it's down, show warning with option to re-enable auto-switch
+        if st.session_state.get("user_manually_selected_ollama", False):
+            st.warning("⚠️ You manually selected Ollama. Auto-switch is disabled.")
+
+            # Only show re-enable button if Ollama is actually down
+            if not ollama_status.ok:
+                if st.button("Re-enable auto-switch and use OpenAI", use_container_width=True, key="reset_manual_ollama"):
+                    # Set flag to trigger switch on next render
+                    st.session_state["force_switch_to_openai"] = True
+                    st.rerun()
     else:
+        # Show info if auto-switched from Ollama
+        if "auto_switched_from_ollama" in st.session_state and st.session_state["auto_switched_from_ollama"]:
+            st.info("ℹ️ Auto-switched to OpenAI because Ollama is down.")
+            st.session_state["auto_switched_from_ollama"] = False  # Clear flag after showing once
         st.caption("Using cloud LLM provider.")
 
-    # If autoswitch changed it, update widget state and rerun once
-    if st.session_state["llm_choice"] != llm_choice:
-        st.session_state["llm_choice"] = llm_choice
-        st.rerun()
-    
     st.divider()
     context = st.text_area(
         "System Context (optional)",
@@ -161,10 +223,49 @@ if run:
 
     except Exception as e:
         msg = str(e)
-        if "localhost:11434" in msg or "Ollama" in msg:
-            st.error("Ollama is not reachable. Start it with `ollama serve` or switch LLM Provider to OpenAI.")
+        error_type = type(e).__name__
+
+        # Specific error handling for common issues
+        if "localhost:11434" in msg or "Ollama" in msg or "OllamaProviderError" in error_type:
+            st.error("**Ollama Connection Error**")
+            st.markdown("""
+            Ollama is not reachable. Please:
+            1. Start Ollama: `ollama serve`
+            2. Verify the model is installed: `ollama list`
+            3. Or switch to **OpenAI** in the LLM Provider dropdown
+            """)
+        elif "OPENAI_API_KEY" in msg or "OpenAI" in error_type:
+            st.error("**OpenAI API Error**")
+            st.markdown("""
+            OpenAI API key issue. Please:
+            1. Check your `.env` file has a valid `OPENAI_API_KEY`
+            2. Verify the key at: https://platform.openai.com/api-keys
+            """)
+        elif "ELEVENLABS" in msg or "ElevenLabs" in msg:
+            st.error("**ElevenLabs API Error**")
+            st.markdown("""
+            ElevenLabs API issue. Please:
+            1. Check your `.env` file has a valid `ELEVENLABS_API_KEY`
+            2. Verify your API quota at: https://elevenlabs.io
+            """)
+        elif "timeout" in msg.lower() or "timed out" in msg.lower():
+            st.error("**Request Timeout**")
+            st.markdown(f"""
+            The request took too long to complete. This can happen with:
+            - Large prompts or complex responses
+            - Slow network connections
+            - Provider rate limiting
+
+            **Error details:** {msg}
+            """)
         else:
-            st.error(f"Error: {e}")
+            st.error(f"**Unexpected Error ({error_type})**")
+            st.markdown(f"```\n{msg}\n```")
+            with st.expander("Debug Information"):
+                st.write(f"**Error Type:** {error_type}")
+                st.write(f"**Error Message:** {msg}")
+                st.write(f"**LLM Provider:** {llm_choice}")
+                st.write(f"**TTS Provider:** {tts_choice}")
         st.stop()
 
 

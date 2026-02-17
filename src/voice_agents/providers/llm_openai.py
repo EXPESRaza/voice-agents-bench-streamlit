@@ -17,6 +17,7 @@ class OpenAIProviderError(RuntimeError):
 class OpenAILLMConfig:
     api_key: str
     model: str = "gpt-4o-mini"
+    temperature: float = 0.7
 
     @staticmethod
     def from_env() -> "OpenAILLMConfig":
@@ -25,7 +26,8 @@ class OpenAILLMConfig:
             raise OpenAIProviderError("Missing OPENAI_API_KEY in environment.")
 
         model = os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
-        return OpenAILLMConfig(api_key=api_key, model=model)
+        temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+        return OpenAILLMConfig(api_key=api_key, model=model, temperature=temperature)
 
 
 class OpenAILLM(LLMProvider):
@@ -50,6 +52,7 @@ class OpenAILLM(LLMProvider):
         resp = self._client.chat.completions.create(
             model=self._cfg.model,
             messages=messages,
+            temperature=self._cfg.temperature,
         )
 
         text = (resp.choices[0].message.content or "").strip()
