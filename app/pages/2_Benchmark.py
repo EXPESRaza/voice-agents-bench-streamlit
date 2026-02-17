@@ -26,7 +26,11 @@ st.caption(
 
 # ---- Provider caching (important) ----
 @st.cache_resource
-def build_agent(llm_name: str, tts_name: str) -> PipelineAgent:
+def build_agent(llm_name: str, tts_name: str, llm_temperature: float = 1.0) -> PipelineAgent:
+    # Import here to set temperature before building
+    import os
+    os.environ["OPENAI_TEMPERATURE"] = str(llm_temperature)
+
     llm = get_llm_provider(llm_name)
     tts = get_tts_provider(tts_name)
     return PipelineAgent(llm=llm, tts=tts)
@@ -123,6 +127,21 @@ with st.sidebar:
         key="bench_system_context",
     )
 
+    # Temperature control (only for OpenAI)
+    if llm_choice == "OpenAI":
+        st.divider()
+        temperature = st.slider(
+            "LLM Temperature",
+            min_value=0.0,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            help="Higher values (e.g., 1.0-2.0) make output more random. Lower values (e.g., 0.1-0.5) make it more focused and deterministic.",
+            key="temperature_slider_bench"
+        )
+    else:
+        temperature = 1.0  # Default for non-OpenAI providers
+
     st.divider()
     keep_audio = st.toggle("Store audio bytes in results (bigger JSON)", value=False)
     max_history = st.slider("Keep last N benchmark runs (in session)", 1, 10, 3)
@@ -185,7 +204,7 @@ if run_bench:
         st.stop()
 
     try:
-        agent = build_agent(llm_choice, tts_choice)
+        agent = build_agent(llm_choice, tts_choice, temperature)
     except Exception as e:
         msg = str(e)
         st.error("**Failed to initialize providers**")

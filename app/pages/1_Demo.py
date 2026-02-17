@@ -29,7 +29,11 @@ if "force_select_newest" not in st.session_state:
 
 # ---- Provider caching (important) ----
 @st.cache_resource
-def build_agent(llm_name: str, tts_name: str) -> PipelineAgent:
+def build_agent(llm_name: str, tts_name: str, llm_temperature: float = 1.0) -> PipelineAgent:
+    # Import here to set temperature before building
+    import os
+    os.environ["OPENAI_TEMPERATURE"] = str(llm_temperature)
+
     llm = get_llm_provider(llm_name)
     tts = get_tts_provider(tts_name)
     return PipelineAgent(llm=llm, tts=tts)
@@ -122,6 +126,21 @@ with st.sidebar:
         key="system_context",
     )
 
+    # Temperature control (only for OpenAI)
+    if llm_choice == "OpenAI":
+        st.divider()
+        temperature = st.slider(
+            "LLM Temperature",
+            min_value=0.0,
+            max_value=2.0,
+            value=1.0,
+            step=0.1,
+            help="Higher values (e.g., 1.0-2.0) make output more random. Lower values (e.g., 0.1-0.5) make it more focused and deterministic.",
+            key="temperature_slider"
+        )
+    else:
+        temperature = 1.0  # Default for non-OpenAI providers
+
     if st.session_state.get("force_select_newest", False):
         st.session_state["selected_run_idx"] = 0
         st.session_state.pop("history_radio", None)  # reset widget state safely
@@ -144,6 +163,14 @@ with st.sidebar:
 
         # Pre-select the most recent run (or keep current selection if possible)
         default_idx = st.session_state.get("history_radio", st.session_state.get("selected_run_idx", 0))
+
+        # Ensure default_idx is a valid integer (handle corrupted session state)
+        try:
+            default_idx = int(default_idx) if default_idx is not None else 0
+        except (ValueError, TypeError):
+            # Session state got corrupted with a string, reset to 0
+            default_idx = 0
+
         default_idx = max(0, min(default_idx, len(labels) - 1))
 
         chosen = st.radio(
@@ -191,7 +218,7 @@ if run:
         st.stop()
 
     try:
-        agent = build_agent(llm_choice, tts_choice)
+        agent = build_agent(llm_choice, tts_choice, temperature)
 
         with st.spinner("Generating response and audio..."):
             result = agent.run(
