@@ -209,6 +209,7 @@ if run:
             "answer_text": result.answer_text,
             "audio_bytes": result.audio_bytes,
             "metrics": result.metrics,
+            "tts_error": result.tts_error,
         }
 
         # Push into history (most recent first), keep last 5
@@ -289,7 +290,44 @@ if selected:
     st.write(selected["answer_text"])
 
     st.subheader("Audio Output")
-    st.audio(selected["audio_bytes"], format="audio/mp3")
+
+    # Check if TTS failed
+    if selected.get("tts_error"):
+        st.error("**TTS Generation Failed**")
+        error_msg = selected["tts_error"]
+
+        # Provide specific guidance based on error type
+        if "ELEVENLABS" in error_msg or "ElevenLabs" in error_msg:
+            st.markdown("""
+            **ElevenLabs API Error**
+
+            Possible causes:
+            - Invalid or missing API key
+            - API quota exceeded
+            - Network connectivity issues
+
+            **Actions:**
+            1. Check your `.env` file has a valid `ELEVENLABS_API_KEY`
+            2. Verify your API quota at: https://elevenlabs.io
+            3. Check your internet connection
+            """)
+        elif "timeout" in error_msg.lower():
+            st.markdown("""
+            **Request Timeout**
+
+            The TTS request took too long. This can happen with:
+            - Long text inputs
+            - Slow network connections
+            - Provider rate limiting
+            """)
+        else:
+            st.markdown(f"**Error details:**\n```\n{error_msg}\n```")
+
+        st.info("💡 The LLM text response was generated successfully above.")
+    elif selected["audio_bytes"]:
+        st.audio(selected["audio_bytes"], format="audio/mp3")
+    else:
+        st.warning("No audio available for this run.")
 
     with metrics_placeholder.container():
         m = selected["metrics"]

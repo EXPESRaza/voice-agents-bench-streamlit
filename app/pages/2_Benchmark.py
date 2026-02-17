@@ -214,9 +214,15 @@ if run_bench:
                 "answer_text": out.answer_text,
                 "metrics": out.metrics,
             }
-            if keep_audio:
+            if keep_audio and out.audio_bytes:
                 # Warning: storing audio bytes makes session memory heavy and JSON huge.
                 row["audio_bytes_b64"] = out.audio_bytes.hex()  # hex is simplest; base64 is also fine
+
+            # Track TTS errors separately (partial failure)
+            if out.tts_error:
+                row["tts_error"] = out.tts_error
+                st.warning(f"⚠️ Prompt {i}/{len(prompts)}: TTS failed but LLM succeeded")
+
             results.append(row)
         except Exception as e:
             error_msg = str(e)
@@ -238,13 +244,16 @@ if run_bench:
     progress.empty()
 
     ok_rows = [r for r in results if "error" not in r]
-    error_count = len(results) - len(ok_rows)
+    tts_error_count = len([r for r in ok_rows if r.get("tts_error")])
+    full_error_count = len(results) - len(ok_rows)
 
     # Show completion summary
-    if error_count == 0:
+    if full_error_count == 0 and tts_error_count == 0:
         status.success(f"✅ Benchmark complete! All {len(prompts)} prompts succeeded in {elapsed_s:.1f}s")
-    elif error_count < len(prompts):
-        status.warning(f"⚠️ Benchmark complete with {error_count}/{len(prompts)} errors in {elapsed_s:.1f}s")
+    elif full_error_count == 0 and tts_error_count > 0:
+        status.warning(f"⚠️ Benchmark complete! LLM succeeded on all prompts, but TTS failed on {tts_error_count}/{len(prompts)} in {elapsed_s:.1f}s")
+    elif full_error_count < len(prompts):
+        status.warning(f"⚠️ Benchmark complete with {full_error_count}/{len(prompts)} full errors and {tts_error_count} TTS errors in {elapsed_s:.1f}s")
     else:
         status.error(f"❌ All prompts failed. Check provider configuration and error details below.")
         st.stop()
@@ -317,6 +326,17 @@ if bench:
     # Show a slim table (avoid huge audio bytes)
     table_rows = []
     for r in bench["results"]:
+        # Determine status
+        if "error" in r:
+            status = "full_error"
+            error_msg = r.get("error", "")
+        elif r.get("tts_error"):
+            status = "tts_error"
+            error_msg = r.get("tts_error", "")
+        else:
+            status = "ok"
+            error_msg = ""
+
         table_rows.append(
             {
                 "run_id": r.get("run_id"),
@@ -324,8 +344,8 @@ if bench:
                 "total_ms": (r.get("metrics") or {}).get("total_ms", None),
                 "llm_ms": (r.get("metrics") or {}).get("llm_ms", None),
                 "tts_ms": (r.get("metrics") or {}).get("tts_ms", None),
-                "status": "error" if "error" in r else "ok",
-                "error": r.get("error", ""),
+                "status": status,
+                "error": error_msg,
             }
         )
     st.dataframe(table_rows, use_container_width=True, hide_index=True)
