@@ -24,9 +24,9 @@ Voice Agents Bench is an interactive Streamlit application designed to benchmark
 
 See the application in action:
 
-<video src="./assets/video-demo.mp4" controls width="100%" style="max-width: 800px;">
-  Your browser does not support the video tag. <a href="./assets/video-demo.mp4">Download the demo video</a>.
-</video>
+[**Watch Demo Video**](./assets/video-demo.mp4)
+
+> Click the link above to view the demo video showing the interactive voice agent pipeline in action.
 
 ## Architecture
 
