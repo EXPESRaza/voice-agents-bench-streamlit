@@ -20,6 +20,14 @@ Voice Agents Bench is an interactive Streamlit application designed to benchmark
 - **Local & Cloud Support**: Run models locally via Ollama or use cloud APIs (OpenAI, ElevenLabs)
 - **Production-Ready Design**: Clean separation of concerns, comprehensive error handling, and unit tests
 
+## Demo
+
+See the application in action:
+
+<video src="./assets/video-demo.mp4" controls width="100%" style="max-width: 800px;">
+  Your browser does not support the video tag. <a href="./assets/video-demo.mp4">Download the demo video</a>.
+</video>
+
 ## Architecture
 
 ```
