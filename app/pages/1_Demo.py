@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import time
 
 import streamlit as st
 from dotenv import load_dotenv
 
-from voice_agents.core.factory import get_llm_provider, get_tts_provider
+from voice_agents.core.factory import get_llm_provider, get_tts_provider, get_tools
 from voice_agents.orchestrators.pipeline_agent import PipelineAgent
 from ui.common import render_ollama_status_sidebar
 
@@ -29,14 +30,17 @@ if "force_select_newest" not in st.session_state:
 
 # ---- Provider caching (important) ----
 @st.cache_resource
-def build_agent(llm_name: str, tts_name: str, llm_temperature: float = 1.0) -> PipelineAgent:
+def build_agent(
+    llm_name: str, tts_name: str, llm_temperature: float = 1.0, tools_enabled: bool = False
+) -> PipelineAgent:
     # Import here to set temperature before building
     import os
     os.environ["OPENAI_TEMPERATURE"] = str(llm_temperature)
 
     llm = get_llm_provider(llm_name)
     tts = get_tts_provider(tts_name)
-    return PipelineAgent(llm=llm, tts=tts)
+    tools = get_tools(llm) if tools_enabled else None
+    return PipelineAgent(llm=llm, tts=tts, tools=tools)
 
 # ---- Handle button clicks BEFORE sidebar renders ----
 # Initialize default LLM choice if not set
@@ -141,6 +145,18 @@ with st.sidebar:
     else:
         temperature = 1.0  # Default for non-OpenAI providers
 
+    # Tool calling toggle
+    st.divider()
+    st.header("Tool Calling")
+    enable_tools = st.checkbox(
+        "Enable Tool Calling",
+        value=False,
+        key="enable_tools",
+        help="Allow the LLM to invoke tools (weather, summarize, search docs) before responding.",
+    )
+    if enable_tools:
+        st.caption("Active tools: **get_weather**, **summarize**, **search_docs**")
+
     if st.session_state.get("force_select_newest", False):
         st.session_state["selected_run_idx"] = 0
         st.session_state.pop("history_radio", None)  # reset widget state safely
@@ -218,7 +234,7 @@ if run:
         st.stop()
 
     try:
-        agent = build_agent(llm_choice, tts_choice, temperature)
+        agent = build_agent(llm_choice, tts_choice, temperature, enable_tools)
 
         with st.spinner("Generating response and audio..."):
             result = agent.run(
@@ -237,6 +253,15 @@ if run:
             "audio_bytes": result.audio_bytes,
             "metrics": result.metrics,
             "tts_error": result.tts_error,
+            "tool_traces": [
+                {
+                    "tool_name": t.tool_name,
+                    "arguments": t.arguments,
+                    "result": t.result,
+                    "elapsed_ms": t.elapsed_ms,
+                }
+                for t in result.tool_traces
+            ],
         }
 
         # Push into history (most recent first), keep last 5
@@ -308,13 +333,35 @@ if history and 0 <= idx < len(history):
 # --- 3) Render selected run (newest is auto-selected after Run) ---
 if selected:
     st.subheader("Assistant Response")
+    traces = selected.get("tool_traces", [])
+    tools_badge = f" • Tools: {len(traces)} call{'s' if len(traces) != 1 else ''}" if traces else " • Tools: none"
     st.caption(
         f"Run: {selected['run_id']} • "
-        f"LLM: {selected['llm_choice']} • TTS: {selected['tts_choice']} • "
+        f"LLM: {selected['llm_choice']} • TTS: {selected['tts_choice']}"
+        f"{tools_badge} • "
         f"Saved in session"
     )
 
+    if traces:
+        st.success(f"Tools called: {', '.join(t['tool_name'] for t in traces)}")
+    else:
+        st.info("No tools were called for this run.")
+
     st.write(selected["answer_text"])
+
+    # Tool traces display
+    if traces:
+        with st.expander(f"Tool Traces ({len(traces)} call{'s' if len(traces) != 1 else ''})"):
+            for i, trace in enumerate(traces):
+                with st.status(f"{trace['tool_name']}", state="complete"):
+                    st.markdown(f"**Arguments:**")
+                    st.code(json.dumps(trace["arguments"], indent=2), language="json")
+                    result_preview = trace["result"]
+                    if len(result_preview) > 500:
+                        result_preview = result_preview[:500] + "..."
+                    st.markdown(f"**Result:**")
+                    st.code(result_preview, language="json")
+                    st.caption(f"Elapsed: {trace['elapsed_ms']:.1f} ms")
 
     st.subheader("Audio Output")
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -7,6 +8,7 @@ from typing import Optional
 import requests
 
 from voice_agents.core.interfaces import LLMProvider
+from voice_agents.tools.definitions import LLMToolResponse, ToolCallRequest
 
 
 class OllamaProviderError(RuntimeError):
@@ -69,3 +71,51 @@ class OllamaLLM(LLMProvider):
         if not text:
             raise OllamaProviderError("Ollama returned empty response text.")
         return text
+
+    def generate_with_tools(
+        self, messages: list[dict], tools: list[dict]
+    ) -> LLMToolResponse:
+        url = f"{self._cfg.base_url.rstrip('/')}/api/chat"
+
+        payload = {
+            "model": self._cfg.model,
+            "messages": messages,
+            "stream": False,
+            "tools": tools,
+        }
+
+        try:
+            resp = requests.post(url, json=payload, timeout=self._timeout_s)
+        except requests.RequestException as e:
+            raise OllamaProviderError(
+                f"Failed to reach Ollama at {self._cfg.base_url}. Is `ollama serve` running? ({e})"
+            ) from e
+
+        if resp.status_code >= 400:
+            raise OllamaProviderError(f"Ollama error {resp.status_code}: {resp.text[:500]}")
+
+        data = resp.json()
+        msg = data.get("message", {}) or {}
+
+        raw_tool_calls = msg.get("tool_calls") or []
+        if raw_tool_calls:
+            tool_calls = [
+                ToolCallRequest(
+                    id=tc.get("id", f"call_{i}"),
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                    if isinstance(tc["function"]["arguments"], dict)
+                    else json.loads(tc["function"]["arguments"]),
+                )
+                for i, tc in enumerate(raw_tool_calls)
+            ]
+            return LLMToolResponse(
+                tool_calls=tool_calls,
+                raw_message=msg,
+            )
+
+        text = (msg.get("content", "") or "").strip()
+        return LLMToolResponse(
+            text=text,
+            raw_message=msg,
+        )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Optional
@@ -7,6 +8,7 @@ from typing import Optional
 from openai import OpenAI
 
 from voice_agents.core.interfaces import LLMProvider
+from voice_agents.tools.definitions import LLMToolResponse, ToolCallRequest
 
 
 class OpenAIProviderError(RuntimeError):
@@ -59,3 +61,34 @@ class OpenAILLM(LLMProvider):
         if not text:
             raise OpenAIProviderError("OpenAI returned empty response text.")
         return text
+
+    def generate_with_tools(
+        self, messages: list[dict], tools: list[dict]
+    ) -> LLMToolResponse:
+        resp = self._client.chat.completions.create(
+            model=self._cfg.model,
+            messages=messages,
+            temperature=self._cfg.temperature,
+            tools=tools,
+        )
+
+        msg = resp.choices[0].message
+
+        if msg.tool_calls:
+            tool_calls = [
+                ToolCallRequest(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=json.loads(tc.function.arguments),
+                )
+                for tc in msg.tool_calls
+            ]
+            return LLMToolResponse(
+                tool_calls=tool_calls,
+                raw_message=msg,
+            )
+
+        return LLMToolResponse(
+            text=(msg.content or "").strip(),
+            raw_message=msg,
+        )
