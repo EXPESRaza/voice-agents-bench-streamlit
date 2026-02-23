@@ -24,7 +24,7 @@ Voice Agents Bench is an interactive Streamlit application designed to benchmark
 
 See the application in action:
 
-https://github.com/user-attachments/assets/5eeea624-c05a-4bb9-a37e-7ca3f5674fe2
+https://github.com/user-attachments/assets/c9a1d89d-1447-4b15-a241-b87fe1666864
 
 ## Architecture
 
@@ -97,29 +97,34 @@ voice-agents-bench-streamlit/
 ### Installation
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/yourusername/voice-agents-bench-streamlit.git
    cd voice-agents-bench-streamlit
    ```
 
 2. **Create and activate virtual environment**
+
    ```bash
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
 3. **Install dependencies**
+
    ```bash
    pip install -r requirements.txt
    ```
 
 4. **Configure environment variables**
+
    ```bash
    cp .env.example .env
    # Edit .env with your API keys
    ```
 
    Example `.env`:
+
    ```env
    # Cloud providers
    OPENAI_API_KEY="sk-..."
@@ -135,6 +140,7 @@ voice-agents-bench-streamlit/
    ```
 
 5. **Run the app**
+
    ```bash
    streamlit run app/Home.py
    ```
@@ -177,6 +183,7 @@ ollama serve
 ### Architecture Reference
 
 Navigate to **Architecture** page for:
+
 - System design diagrams
 - Component responsibilities
 - Extension guidelines (STT, Realtime)
@@ -203,6 +210,7 @@ python scripts/smoke_pipeline_openai_elevenlabs.py
 ### Add a New LLM Provider
 
 1. Implement `LLMProvider` protocol:
+
    ```python
    from voice_agents.core.interfaces import LLMProvider
 
@@ -213,6 +221,7 @@ python scripts/smoke_pipeline_openai_elevenlabs.py
    ```
 
 2. Register in `core/factory.py`:
+
    ```python
    def get_llm_provider(name: str) -> LLMProvider:
        if name.lower() == "myllm":
