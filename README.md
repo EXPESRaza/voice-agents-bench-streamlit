@@ -15,7 +15,8 @@ Voice Agents Bench is an interactive Streamlit application designed to benchmark
 - **Provider-Agnostic Architecture**: Clean interface contracts enable seamless provider switching without touching orchestration or UI code
 - **Real-Time Latency Metrics**: Track and visualize LLM, TTS, and end-to-end pipeline latencies
 - **Statistical Analysis**: P50/P95 percentile calculations for accurate performance characterization
-- **Interactive Demo**: Live text-to-speech pipeline with configurable providers and system context
+- **Tool Calling**: LLM can invoke tools (weather, summarize, search docs) in a multi-turn loop before responding, with full execution traces in the UI
+- **Interactive Demo**: Live text-to-speech pipeline with configurable providers, system context, and optional tool calling
 - **Batch Benchmarking**: Run multiple prompts, export results as JSON for reproducibility
 - **Local & Cloud Support**: Run models locally via Ollama or use cloud APIs (OpenAI, ElevenLabs)
 - **Production-Ready Design**: Clean separation of concerns, comprehensive error handling, and unit tests
@@ -36,15 +37,16 @@ https://github.com/user-attachments/assets/c9a1d89d-1447-4b15-a241-b87fe1666864
                      │
 ┌────────────────────▼────────────────────────────────────────┐
 │                  PipelineAgent                              │
-│           (Orchestrates: Text → LLM → TTS)                  │
-│              + Latency Measurement (Timer)                  │
-└────────┬────────────────────────────┬───────────────────────┘
-         │                            │
-┌────────▼──────────┐        ┌────────▼──────────┐
-│   LLM Providers   │        │   TTS Providers   │
-│  • OpenAI (GPT)   │        │  • ElevenLabs     │
-│  • Ollama (Local) │        │  • (Extensible)   │
-└───────────────────┘        └───────────────────┘
+│        (Orchestrates: Text → LLM [→ Tools] → TTS)          │
+│           + Tool Loop + Latency Measurement (Timer)         │
+└────────┬──────────────────┬──────────────────┬──────────────┘
+         │                  │                  │
+┌────────▼──────────┐ ┌────▼───────────┐ ┌────▼──────────┐
+│   LLM Providers   │ │     Tools      │ │ TTS Providers │
+│  • OpenAI (GPT)   │ │ • get_weather  │ │ • ElevenLabs  │
+│  • Ollama (Local) │ │ • summarize    │ │ • (Extensible)│
+│                   │ │ • search_docs  │ │               │
+└───────────────────┘ └────────────────┘ └───────────────┘
 ```
 
 ### Design Principles
@@ -69,14 +71,19 @@ voice-agents-bench-streamlit/
 │   ├── core/
 │   │   ├── interfaces.py       # Provider contracts (Protocol)
 │   │   ├── metrics.py          # Timer utility for latency tracking
-│   │   ├── factory.py          # Provider instantiation
+│   │   ├── factory.py          # Provider + tool instantiation
 │   │   └── ollama_status.py    # Ollama health checks
 │   ├── providers/
-│   │   ├── llm_openai.py       # OpenAI LLM implementation
-│   │   ├── llm_ollama.py       # Ollama LLM implementation
+│   │   ├── llm_openai.py       # OpenAI LLM (+ tool calling)
+│   │   ├── llm_ollama.py       # Ollama LLM (+ tool calling)
 │   │   └── tts_elevenlabs.py   # ElevenLabs TTS implementation
+│   ├── tools/
+│   │   ├── definitions.py      # ToolSpec, ToolTrace, LLMToolResponse
+│   │   ├── weather.py          # Weather lookup tool (stubbed)
+│   │   ├── summarize.py        # LLM-backed summarization tool
+│   │   └── search_docs.py      # Document search tool (stubbed)
 │   └── orchestrators/
-│       └── pipeline_agent.py   # Main orchestration logic
+│       └── pipeline_agent.py   # Pipeline + tool-calling loop
 ├── tests/                      # Unit tests with mocked providers
 ├── scripts/                    # Smoke tests for quick validation
 ├── .env.example                # Environment variables template
@@ -166,10 +173,12 @@ ollama serve
 
 1. Navigate to **Demo** page in the sidebar
 2. Select LLM provider (OpenAI or Ollama) and TTS provider (ElevenLabs)
-3. Enter a prompt (e.g., "Say hello in a friendly way")
-4. Click **Run** to generate response
-5. View latency metrics (LLM ms, TTS ms, Total ms)
-6. Listen to audio output and browse run history
+3. Optionally enable **Tool Calling** in the sidebar to let the LLM invoke tools
+4. Enter a prompt (e.g., "What's the weather in Seattle?")
+5. Click **Run** to generate response
+6. View latency metrics (LLM ms, TTS ms, Total ms)
+7. Inspect tool execution traces (tool name, arguments, result, timing)
+8. Listen to audio output and browse run history
 
 ### Batch Benchmarking
 
@@ -235,6 +244,42 @@ python scripts/smoke_pipeline_openai_elevenlabs.py
 
 Follow the same pattern using the `TTSProvider` protocol.
 
+### Add a New Tool
+
+1. Create a tool function and `ToolSpec` in `tools/`:
+
+   ```python
+   from voice_agents.tools.definitions import ToolSpec
+
+   def my_tool(query: str) -> str:
+       # Your implementation — must return a string
+       return '{"result": "..."}'
+
+   MY_TOOL_SPEC = ToolSpec(
+       name="my_tool",
+       description="What this tool does",
+       parameters={
+           "type": "object",
+           "properties": {
+               "query": {"type": "string", "description": "The input"}
+           },
+           "required": ["query"],
+       },
+       fn=my_tool,
+   )
+   ```
+
+2. Register in `core/factory.py` `get_tools()`:
+
+   ```python
+   def get_tools(llm: LLMProvider) -> list[ToolSpec]:
+       return [
+           WEATHER_TOOL_SPEC,
+           MY_TOOL_SPEC,  # add here
+           ...
+       ]
+   ```
+
 ### Add Speech-to-Text (STT)
 
 1. Define `STTProvider` protocol in `core/interfaces.py`
@@ -248,12 +293,13 @@ Follow the same pattern using the `TTSProvider` protocol.
 This project demonstrates:
 
 - **Software Architecture**: Clean separation of concerns, interface-based design, factory pattern
+- **Agentic Patterns**: Tool-calling loop with multi-turn LLM orchestration, execution tracing, and iteration limits
 - **Performance Engineering**: Quantitative latency measurement, percentile analysis, bottleneck identification
 - **Code Quality**: Type hints, dataclasses, protocol-based interfaces, comprehensive error handling
 - **Testing**: Unit tests with mocked dependencies, smoke tests for integration validation
 - **Production Readiness**: Environment-based configuration, structured logging (roadmap), extensible design
 - **Full-Stack Skills**: Backend orchestration + frontend UX with Streamlit
-- **AI/ML Awareness**: LLM/TTS provider integration, context management, cost/latency trade-offs
+- **AI/ML Awareness**: LLM/TTS provider integration, tool calling, context management, cost/latency trade-offs
 
 ### Performance Characteristics (Example)
 
@@ -267,6 +313,7 @@ _Results vary based on prompt complexity, network conditions, and provider load.
 
 ## Roadmap
 
+- [x] Tool calling support (weather, summarize, search docs) with execution traces
 - [ ] Add Speech-to-Text (STT) providers (Whisper, AssemblyAI)
 - [ ] Implement cost tracking and estimation per run
 - [ ] Add real-time streaming agent (WebSocket-based)
@@ -274,6 +321,7 @@ _Results vary based on prompt complexity, network conditions, and provider load.
 - [ ] Provider retry logic with exponential backoff
 - [ ] Multi-turn conversation support
 - [ ] Additional TTS providers (Azure, AWS Polly, Cartesia)
+- [ ] Additional tools (calculator, web search, RAG)
 - [ ] Benchmark visualization charts (latency distributions)
 
 ## Contributing
